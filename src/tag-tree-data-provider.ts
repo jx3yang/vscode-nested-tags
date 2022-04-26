@@ -12,6 +12,7 @@ import * as path from "path";
 interface IFileInfo {
   tags: Set<string>;
   filePath: string;
+  title?: string;
 }
 
 class TagTreeDataProvider
@@ -28,6 +29,10 @@ class TagTreeDataProvider
    */
   readonly onDidChangeTreeData: vscode.Event<TagNode | FileNode | null> = this
     ._onDidChangeTreeData.event;
+
+  private getDisplayName(info: IFileInfo): string {
+    return info.title ?? this.getPathRelativeToWorkspaceFolder(Uri.file(info.filePath));
+  }
 
   constructor() {
     /* Register the extension to events of interest
@@ -63,14 +68,12 @@ class TagTreeDataProvider
     (async () => {
       const uris = await vscode.workspace.findFiles(`**/*.${globPattern}`);
       const infos = await Promise.all(
-        uris.map(uri => this.getTagsFromFileOnFileSystem(uri.fsPath))
+        uris.map(uri => this.getFileInfoFromFileOnFileSystem(uri.fsPath))
       );
       infos
         .filter(info => info.tags.size > 0)
         .forEach(info => {
-          const displayName = this.getPathRelativeToWorkspaceFolder(
-            Uri.file(info.filePath)
-          );
+          const displayName = this.getDisplayName(info);
 
           this.tagTree.addFile(info.filePath, [...info.tags], displayName);
         });
@@ -126,7 +129,7 @@ class TagTreeDataProvider
     const result = new vscode.TreeItem(displayName, collapsibleState);
     if (isFile) {
       result.command = {
-        arguments: [vscode.Uri.file(tagTreeNode.filePath)],
+        arguments: [vscode.Uri.file((tagTreeNode as FileNode).filePath)],
         command: "vscode.open",
         title: "Jump to tag reference"
       };
@@ -148,10 +151,10 @@ class TagTreeDataProvider
       this.matchesWatchedFileExtensions(changeEvent.document.uri)
     ) {
       const filePath = changeEvent.document.fileName;
-      const fileInfo = await this.getTagsFromFileOnFileSystem(filePath);
+      const fileInfo = await this.getFileInfoFromFileOnFileSystem(filePath);
       const tagsInTreeForFile = this.tagTree.getTagsForFile(filePath);
       // @ts-ignore
-      this.updateTreeForFile(filePath, tagsInTreeForFile, fileInfo.tags);
+      this.updateTreeForFile(filePath, fileInfo, tagsInTreeForFile, fileInfo.tags);
     }
   }
 
@@ -170,12 +173,13 @@ class TagTreeDataProvider
       filePath !== undefined &&
       this.matchesWatchedFileExtensions(changeEvent.document.uri)
     ) {
-      const fileInfo = this.getTagsFromFileText(
+      const fileInfo = this.getFileInfoFromFileText(
         changeEvent.document.getText(),
         filePath
       );
       const tagsInTreeForFile = this.tagTree.getTagsForFile(filePath);
-      const isUpdateNeeded = !setsAreEqual(fileInfo.tags, tagsInTreeForFile);
+      const currentTitle = this.tagTree.getDisplayNameForFile(filePath);
+      const isUpdateNeeded = !setsAreEqual(fileInfo.tags, tagsInTreeForFile) || fileInfo.title != currentTitle;
       /*
        * This could be potentially performance intensive due to the number of changes that could
        * be made to a document and how large the document is. There will definitely need to be some
@@ -183,9 +187,7 @@ class TagTreeDataProvider
        */
       if (isUpdateNeeded) {
         this.tagTree.deleteFile(filePath);
-        const displayName = this.getPathRelativeToWorkspaceFolder(
-          Uri.file(filePath)
-        );
+        const displayName = this.getDisplayName(fileInfo);
         this.tagTree.addFile(
           filePath,
           [...fileInfo.tags.values()],
@@ -206,7 +208,7 @@ class TagTreeDataProvider
   private async onDidCreate(fileUri: vscode.Uri) {
     if (!fs.lstatSync(fileUri.fsPath).isDirectory()) {
       const displayName = this.getPathRelativeToWorkspaceFolder(fileUri);
-      const fileInfo = await this.getTagsFromFileOnFileSystem(fileUri.fsPath);
+      const fileInfo = await this.getFileInfoFromFileOnFileSystem(fileUri.fsPath);
       this.tagTree.addFile(
         fileUri.fsPath,
         [...fileInfo.tags.values()],
@@ -224,15 +226,14 @@ class TagTreeDataProvider
    */
   private updateTreeForFile(
     filePath: string,
+    fileInfo: IFileInfo,
     tagsBefore: Set<string>,
     tagsAfter: Set<string>
   ) {
     const isUpdateNeeded = !setsAreEqual(tagsBefore, tagsAfter);
     if (isUpdateNeeded) {
       this.tagTree.deleteFile(filePath);
-      const displayName = this.getPathRelativeToWorkspaceFolder(
-        Uri.file(filePath)
-      );
+      const displayName = this.getDisplayName(fileInfo);
       this.tagTree.addFile(filePath, [...tagsAfter.values()], displayName);
       /*
        * TODO (bdietz) - this._onDidChangeTreeData.fire(specificNode?)
@@ -247,23 +248,13 @@ class TagTreeDataProvider
 
   // TODO: (bdietz) - the method names of getTagsFrom* are kind of misleading because they return a FileInfo object.
 
-  /**
-   * Retrieves tags for a file's text content without accessing the file system.
-   *
-   * @param fileContents The document text
-   * @param filePath The local filesystem path
-   */
-  private getTagsFromFileText(
+  private getFileInfoFromFileText(
     fileContents: string,
     filePath: string
   ): IFileInfo {
-    // Parse any yaml frontmatter and check for tags within that frontmatter
     const { data } = grayMatter(fileContents);
-    let yamlTags = new Set();
-    if (data.tags) {
-      yamlTags = new Set([data.tags]);
-    }
-
+    const yamlTags = new Set<string>(data.tags ? [data.tags] : []);
+    const { title } = data as { title?: string };
     return fileContents.split("\n").reduce(
       (accumulator, currentLine) => {
         if (currentLine.includes("@nested-tags:")) {
@@ -277,14 +268,14 @@ class TagTreeDataProvider
             .split(",");
           return {
             ...accumulator,
-            tags: new Set([...accumulator.tags, ...tagsToAdd])
+            tags: new Set([...accumulator.tags, ...tagsToAdd]),
           };
         }
 
         return accumulator;
       },
       // @ts-ignore
-      { tags: new Set(...yamlTags), filePath }
+      { tags: new Set(...yamlTags), filePath, title }
     );
   }
 
@@ -293,11 +284,11 @@ class TagTreeDataProvider
    *
    * @param filePath The local filesystem path
    */
-  private async getTagsFromFileOnFileSystem(
+  private async getFileInfoFromFileOnFileSystem(
     filePath: string
   ): Promise<IFileInfo> {
     const buffer = await fs.promises.readFile(filePath);
-    return this.getTagsFromFileText(buffer.toString(), filePath);
+    return this.getFileInfoFromFileText(buffer.toString(), filePath);
   }
 
   /**

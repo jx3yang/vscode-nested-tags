@@ -22,9 +22,10 @@
     "semantic-release": "semantic-release",
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch --passWithNoTests",
-    "test:update-snapshot":"jest --updateSnapshot",
+    "test:update-snapshot": "jest --updateSnapshot",
     "vscode:prepublish": "npm run build",
-    "watch": "npm run build:watch"
+    "watch": "npm run build:watch",
+    "install_local": "yarn vsce package && code --install-extension vscode-nested-tags-0.0.0.vsix"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^3.0.2",
@@ -50,6 +51,7 @@
     "tslint-config-prettier": "^1.17.0",
     "typedoc": "^0.15.3",
     "typescript": "^3.2.2",
+    "vsce": "^2.7.0",
     "vscode": "^1.1.25"
   },
   "dependencies": {

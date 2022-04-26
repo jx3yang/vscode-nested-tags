@@ -52,7 +52,19 @@ class TagTree {
     }, new Set());
   }
 
-  public getNode(nodePath: string) {
+  public getDisplayNameForFile(filePath: string) {
+    const fileKey = this.createKeyForFile(filePath);
+    if (!this.fileIndex.has(fileKey)) {
+      return undefined;
+    }
+    const tagNodes = this.fileIndex.get(fileKey);
+    if (tagNodes && tagNodes.length > 0) {
+      return tagNodes[0].displayName;
+    }
+    return undefined;
+  }
+
+  public getNode(nodePath: string): TagNode | FileNode {
     // @ts-ignore
     return nodePath.split("/").reduce((currentNode, pathPart) => {
       // Must be looking at a file
