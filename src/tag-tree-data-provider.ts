@@ -207,8 +207,8 @@ class TagTreeDataProvider
 
   private async onDidCreate(fileUri: vscode.Uri) {
     if (!fs.lstatSync(fileUri.fsPath).isDirectory()) {
-      const displayName = this.getPathRelativeToWorkspaceFolder(fileUri);
       const fileInfo = await this.getFileInfoFromFileOnFileSystem(fileUri.fsPath);
+      const displayName = this.getDisplayName(fileInfo);
       this.tagTree.addFile(
         fileUri.fsPath,
         [...fileInfo.tags.values()],
